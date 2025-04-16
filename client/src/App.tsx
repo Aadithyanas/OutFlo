@@ -1,5 +1,5 @@
 import  { useState } from 'react';
-import React from 'react';
+
 import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { CampaignList } from './components/CampaignList';
