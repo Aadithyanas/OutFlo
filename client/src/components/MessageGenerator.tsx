@@ -79,7 +79,7 @@ export const MessageGenerator: React.FC = () => {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.5 }}
-      className="p-6 min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 text-white  bg-gradient-to-br from-red-400 via-gray-900 to-blue-200"
+      className="p-6 min-h-screen text-white "
     >
       <div className="max-w-2xl mx-auto">
         <motion.div

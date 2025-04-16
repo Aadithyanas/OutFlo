@@ -17,7 +17,7 @@ function App() {
   return (
     <Router>
       <Layout>
-        <div className="flex h-screen relative">
+        <div className="flex h-screen relative ">
           {/* Mobile Menu Button */}
           <button 
             onClick={toggleSidebar} 
@@ -40,7 +40,7 @@ function App() {
               sidebarOpen ? 'translate-x-0' : '-translate-x-full'
             } md:translate-x-0 fixed md:relative z-40 w-64 h-full transition-transform duration-300 ease-in-out`}
           >
-            <div className="h-full bg-gradient-to-br from-gray-900 via-red-400 to-gray-900 text-white p-6 overflow-y-auto shadow-xl">
+            <div className="h-full bg-gray-800 text-white p-6 overflow-y-auto shadow-xl">
               <div className="relative overflow-hidden rounded-lg p-4 mb-8 bg-gradient-to-r from-blue-800 to-purple-800">
                 <div className="absolute inset-0 bg-gradient-to-r from-purple-600/30 via-pink-500/30 to-blue-500/30 animate-gradient-xy"></div>
                 <h1 className="text-2xl font-bold relative z-10 text-center animate-pulse-text">Campaign Manager</h1>

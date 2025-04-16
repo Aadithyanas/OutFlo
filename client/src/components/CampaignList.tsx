@@ -85,7 +85,7 @@ export const CampaignList: React.FC = () => {
       <div className="bg-gray-800 bg-opacity-70 rounded-xl shadow-2xl overflow-hidden backdrop-blur-sm relative">
         <div className="absolute inset-0 bg-gradient-to-br from-blue-900/30 via-purple-900/30 to-blue-800/30 pointer-events-none"></div>
         
-        <div className="overflow-x-auto scroll-hidden relative z-10">
+        <div className="overflow-x-auto scroll relative z-10">
           <table className="min-w-full divide-y divide-gray-700">
             <thead>
               <tr>

@@ -60,7 +60,7 @@ export const CampaignForm: React.FC = () => {
   };
 
   return (
-    <div className="flex justify-center items-center min-h-screen p-6 bg-gradient-to-br from-red-400 via-gray-900 to-blue-200">
+    <div className="flex justify-center items-center min-h-screen p-6 bg-gray-800">
       <div className="w-full max-w-2xl  relative rounded-lg">
         <div className="absolute -inset-1 bg-gradient-to-r from-purple-600 via-pink-500 to-blue-500 rounded-lg blur-md opacity-75 animate-pulseanimate-rgb"></div>
         <div className="relative bg-gray-800 bg-opacity-90 rounded-lg backdrop-blur-sm shadow-xl">
