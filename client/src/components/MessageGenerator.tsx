@@ -79,7 +79,7 @@ export const MessageGenerator: React.FC = () => {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.5 }}
-      className="p-6 min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 text-white"
+      className="p-6 min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 text-white  bg-gradient-to-br from-red-400 via-gray-900 to-blue-200"
     >
       <div className="max-w-2xl mx-auto">
         <motion.div
@@ -133,7 +133,7 @@ export const MessageGenerator: React.FC = () => {
                     type="text"
                     value={profile[item.field]}
                     onChange={(e) => handleInputChange(item.field, e.target.value)}
-                    className="mt-1 block w-full rounded-md bg-gray-700 border-gray-600 text-white shadow-sm focus:border-blue-500 focus:ring-blue-500 transition-all duration-200"
+                    className="mt-1 block w-full p-2 rounded-md bg-gray-700 border-gray-600 text-white shadow-sm focus:border-blue-500 focus:ring-blue-500 transition-all duration-200"
                     required
                   />
                 )}

@@ -1,3 +1,5 @@
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -10,14 +12,40 @@ import json
 import os
 from datetime import datetime
 import pymongo
+from threading import Lock
+import logging
 
-class LinkedInScraper:
-    def __init__(self, email, password, headless=False, 
-                 mongo_uri="mongodb+srv://aadithyanmerin:AdithyanMerin@cluster0.syz6u.mongodb.net/", db_name="linkedin_db"):
-        self.email = email
-        self.password = password
+app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class LinkedInScraperServer:
+    def __init__(self, mongo_uri="mongodb+srv://aadithyanmerin:AdithyanMerin@cluster0.syz6u.mongodb.net/", db_name="linkedin_db"):
+        # Setup MongoDB connection
+        try:
+            self.client = pymongo.MongoClient(mongo_uri)
+            self.db = self.client[db_name]
+            self.connections_collection = self.db['connections']
+            self.sessions_collection = self.db['scraper_sessions']
+            
+            # Create indexes
+            self.connections_collection.create_index([("profile_url", pymongo.ASCENDING)], unique=True)
+            self.sessions_collection.create_index([("session_id", pymongo.ASCENDING)], unique=True)
+            
+            logger.info(f"Connected to MongoDB: {db_name}")
+        except Exception as e:
+            logger.error(f"Error connecting to MongoDB: {str(e)}")
+            raise
         
-        # Setup Chrome options
+        # Thread-safe lock for driver operations
+        self.driver_lock = Lock()
+        self.active_drivers = {}
+    
+    def create_driver(self, session_id, headless=True):
+        """Create a new Chrome driver instance for a session"""
         chrome_options = Options()
         if headless:
             chrome_options.add_argument("--headless")
@@ -27,172 +55,224 @@ class LinkedInScraper:
         chrome_options.add_argument("--window-size=1920,1080")
         chrome_options.add_argument("--disable-notifications")
         
-        # Initialize the Chrome driver
-        self.driver = webdriver.Chrome(options=chrome_options)
-        self.wait = WebDriverWait(self.driver, 10)
-        
-        # Setup MongoDB connection
-        try:
-            self.client = pymongo.MongoClient(mongo_uri)
-            self.db = self.client[db_name]
-            self.connections_collection = self.db['connections']
-            
-            # Create index on profile_url for faster lookups and to ensure uniqueness
-            self.connections_collection.create_index([("profile_url", pymongo.ASCENDING)], unique=True)
-            
-            print(f"Connected to MongoDB: {db_name}")
-        except Exception as e:
-            print(f"Error connecting to MongoDB: {str(e)}")
-            raise
+        driver = webdriver.Chrome(options=chrome_options)
+        self.active_drivers[session_id] = driver
+        return driver
     
-    def login(self):
+    def get_driver(self, session_id):
+        """Get the driver for a session or create a new one"""
+        with self.driver_lock:
+            if session_id not in self.active_drivers:
+                self.create_driver(session_id)
+            return self.active_drivers[session_id]
+    
+    def close_driver(self, session_id):
+        """Close and remove a driver for a session"""
+        with self.driver_lock:
+            if session_id in self.active_drivers:
+                try:
+                    self.active_drivers[session_id].quit()
+                except:
+                    pass
+                del self.active_drivers[session_id]
+    
+    def login(self, session_id, email, password):
         """Login to LinkedIn with provided credentials"""
-        print("Logging in to LinkedIn...")
-        self.driver.get('https://www.linkedin.com/login')
+        driver = self.get_driver(session_id)
+        logger.info(f"Logging in to LinkedIn for session {session_id}")
         
         try:
+            driver.get('https://www.linkedin.com/login')
+            
             # Enter email
-            email_field = self.wait.until(EC.presence_of_element_located((By.ID, 'username')))
-            email_field.send_keys(self.email)
+            email_field = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, 'username')))
+            email_field.send_keys(email)
             
             # Enter password
-            password_field = self.driver.find_element(By.ID, 'password')
-            password_field.send_keys(self.password)
+            password_field = driver.find_element(By.ID, 'password')
+            password_field.send_keys(password)
             
             # Click login button
-            login_button = self.driver.find_element(By.XPATH, "//button[@type='submit']")
+            login_button = driver.find_element(By.XPATH, "//button[@type='submit']")
             login_button.click()
             
             # Wait for login to complete
-            self.wait.until(EC.presence_of_element_located((By.ID, 'global-nav')))
-            print("Successfully logged in!")
-            return True
+            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, 'global-nav')))
+            logger.info(f"Successfully logged in for session {session_id}")
+            
+            # Save session info
+            self.sessions_collection.update_one(
+                {"session_id": session_id},
+                {"$set": {
+                    "email": email,
+                    "logged_in": True,
+                    "last_activity": datetime.now()
+                }},
+                upsert=True
+            )
+            
+            return {"status": "success", "message": "Logged in successfully"}
             
         except TimeoutException:
-            print("Login failed. Check your credentials or if there's a CAPTCHA challenge.")
-            return False
+            error_msg = "Login failed. Check your credentials or if there's a CAPTCHA challenge."
+            logger.error(f"Login failed for session {session_id}: {error_msg}")
+            return {"status": "error", "message": error_msg}
         except Exception as e:
-            print(f"Login error: {str(e)}")
-            return False
+            error_msg = f"Login error: {str(e)}"
+            logger.error(f"Login error for session {session_id}: {error_msg}")
+            return {"status": "error", "message": error_msg}
     
-    def get_connections(self, max_connections=None):
+    def get_connections(self, session_id, max_connections=None):
         """Navigate to connections page and scrape data"""
-        print("Navigating to connections page...")
-        self.driver.get('https://www.linkedin.com/mynetwork/invite-connect/connections/')
+        driver = self.get_driver(session_id)
+        logger.info(f"Getting connections for session {session_id}")
         
-        # Wait for the connections list to load
         try:
-            self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, 'mn-connection-card')))
-        except TimeoutException:
-            print("Could not load connections page.")
-            return False
-        
-        print("Scrolling to load all connections...")
-        # Scroll down to load more connections
-        connections_scraped = 0
-        last_height = self.driver.execute_script("return document.body.scrollHeight")
-        
-        while True:
-            # Scroll down
-            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            driver.get('https://www.linkedin.com/mynetwork/invite-connect/connections/')
             
-            # Wait for page to load
-            time.sleep(2)
+            # Wait for the connections list to load
+            try:
+                WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.CLASS_NAME, 'mn-connection-card')))
+            except TimeoutException:
+                error_msg = "Could not load connections page."
+                logger.error(error_msg)
+                return {"status": "error", "message": error_msg}
             
-            # Calculate new scroll height and compare with last scroll height
-            new_height = self.driver.execute_script("return document.body.scrollHeight")
+            logger.info("Scrolling to load all connections...")
+            # Scroll down to load more connections
+            connections_scraped = 0
+            last_height = driver.execute_script("return document.body.scrollHeight")
             
-            # Check if we've reached the end or hit max_connections
-            if new_height == last_height:
-                break
-            if max_connections and connections_scraped >= max_connections:
-                break
+            while True:
+                # Scroll down
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
                 
-            last_height = new_height
+                # Wait for page to load
+                time.sleep(2)
+                
+                # Calculate new scroll height and compare with last scroll height
+                new_height = driver.execute_script("return document.body.scrollHeight")
+                
+                # Check if we've reached the end or hit max_connections
+                if new_height == last_height:
+                    break
+                if max_connections and connections_scraped >= max_connections:
+                    break
+                    
+                last_height = new_height
+                
+                # Count visible connections
+                connections = driver.find_elements(By.CLASS_NAME, 'mn-connection-card')
+                connections_scraped = len(connections)
+                logger.info(f"Loaded {connections_scraped} connections so far...")
+                
+                if max_connections and connections_scraped >= max_connections:
+                    break
             
-            # Count visible connections
-            connections = self.driver.find_elements(By.CLASS_NAME, 'mn-connection-card')
-            connections_scraped = len(connections)
-            print(f"Loaded {connections_scraped} connections so far...")
+            logger.info(f"Loaded {connections_scraped} connections. Now extracting data...")
+            return self.extract_connection_data(session_id, max_connections)
             
-            if max_connections and connections_scraped >= max_connections:
-                break
-        
-        print(f"Loaded {connections_scraped} connections. Now extracting data...")
-        return self.extract_connection_data(max_connections)
+        except Exception as e:
+            error_msg = f"Error getting connections: {str(e)}"
+            logger.error(f"Error in get_connections for session {session_id}: {error_msg}")
+            return {"status": "error", "message": error_msg}
     
-    def extract_connection_data(self, max_connections=None):
+    def extract_connection_data(self, session_id, max_connections=None):
         """Extract data from each connection card"""
-        connections = self.driver.find_elements(By.CLASS_NAME, 'mn-connection-card')
+        driver = self.get_driver(session_id)
         
-        if max_connections:
-            connections = connections[:max_connections]
-        
-        total = len(connections)
-        print(f"Found {total} connections. Extracting data...")
-        
-        results = []
-        for idx, connection in enumerate(connections):
-            try:
-                # Extract profile URL
-                profile_url = connection.find_element(By.CLASS_NAME, 'mn-connection-card__link').get_attribute('href').split('?')[0]
-                
-                # Extract name
-                name_elem = connection.find_element(By.CLASS_NAME, 'mn-connection-card__name')
-                name = name_elem.text if name_elem else "Unknown"
-                
-                # Extract headline (job title)
+        try:
+            connections = driver.find_elements(By.CLASS_NAME, 'mn-connection-card')
+            
+            if max_connections:
+                connections = connections[:max_connections]
+            
+            total = len(connections)
+            logger.info(f"Found {total} connections. Extracting data...")
+            
+            results = []
+            for idx, connection in enumerate(connections):
                 try:
-                    headline_elem = connection.find_element(By.CLASS_NAME, 'mn-connection-card__occupation')
-                    headline = headline_elem.text
-                except NoSuchElementException:
-                    headline = ""
-                
-                # Build connection data
-                connection_data = {
-                    'profile_url': profile_url,
-                    'name': name,
-                    'about': headline,
-                    'location': "",  # Will need to visit profile page for this
-                    'company': "",   # Will need to visit profile page for this
-                    'position': "",  # Extracted from headline if possible
-                    'connection_date': "",  # Will need additional parsing
-                    'scraped_date': datetime.now()
-                }
-                
-                # Save to MongoDB
-                self.save_connection(connection_data)
-                
-                results.append(connection_data)
-                
-                if (idx + 1) % 10 == 0:
-                    print(f"Processed {idx + 1}/{total} connections...")
-                
-            except Exception as e:
-                print(f"Error extracting data for connection {idx + 1}: {str(e)}")
+                    # Extract profile URL
+                    profile_url = connection.find_element(By.CLASS_NAME, 'mn-connection-card__link').get_attribute('href').split('?')[0]
+                    
+                    # Extract name
+                    name_elem = connection.find_element(By.CLASS_NAME, 'mn-connection-card__name')
+                    name = name_elem.text if name_elem else "Unknown"
+                    
+                    # Extract headline (job title)
+                    try:
+                        headline_elem = connection.find_element(By.CLASS_NAME, 'mn-connection-card__occupation')
+                        headline = headline_elem.text
+                    except NoSuchElementException:
+                        headline = ""
+                    
+                    # Build connection data
+                    connection_data = {
+                        'profile_url': profile_url,
+                        'name': name,
+                        'about': headline,
+                        'location': "",  # Will need to visit profile page for this
+                        'company': "",   # Will need to visit profile page for this
+                        'position': "",  # Extracted from headline if possible
+                        'connection_date': "",  # Will need additional parsing
+                        'scraped_date': datetime.now(),
+                        'session_id': session_id
+                    }
+                    
+                    # Save to MongoDB
+                    self.save_connection(connection_data)
+                    
+                    results.append(connection_data)
+                    
+                    if (idx + 1) % 10 == 0:
+                        logger.info(f"Processed {idx + 1}/{total} connections...")
+                    
+                except Exception as e:
+                    logger.error(f"Error extracting data for connection {idx + 1}: {str(e)}")
+            
+            # Update session info
+            self.sessions_collection.update_one(
+                {"session_id": session_id},
+                {"$set": {
+                    "last_activity": datetime.now(),
+                    "connections_count": len(results)
+                }}
+            )
+            
+            return {
+                "status": "success",
+                "message": f"Successfully scraped {len(results)} connections",
+                "data": results
+            }
         
-        return results
+        except Exception as e:
+            error_msg = f"Error extracting connection data: {str(e)}"
+            logger.error(f"Error in extract_connection_data for session {session_id}: {error_msg}")
+            return {"status": "error", "message": error_msg}
     
-    def get_detailed_profile_data(self, urls):
+    def get_detailed_profile_data(self, session_id, profile_urls):
         """Visit each profile and get more detailed information"""
-        print(f"Getting detailed information for {len(urls)} profiles...")
+        driver = self.get_driver(session_id)
+        logger.info(f"Getting detailed information for {len(profile_urls)} profiles in session {session_id}")
+        
         results = []
         
-        for idx, url in enumerate(urls):
+        for idx, url in enumerate(profile_urls):
             try:
-                print(f"Visiting profile {idx + 1}/{len(urls)}: {url}")
-                self.driver.get(url)
+                logger.info(f"Visiting profile {idx + 1}/{len(profile_urls)}: {url}")
+                driver.get(url)
                 time.sleep(2)  # Allow page to load
                 
                 # Extract data here (customize based on what you need)
                 try:
-                    location = self.driver.find_element(By.XPATH, "//span[contains(@class, 'text-body-small') and contains(@class, 'inline')]").text
+                    location = driver.find_element(By.XPATH, "//span[contains(@class, 'text-body-small') and contains(@class, 'inline')]").text
                 except:
                     location = ""
                 
                 # Get current company and position
                 try:
-                    experience_section = self.driver.find_element(By.ID, "experience-section")
+                    experience_section = driver.find_element(By.ID, "experience-section")
                     first_position = experience_section.find_element(By.TAG_NAME, "li")
                     company = first_position.find_element(By.CLASS_NAME, "pv-entity__secondary-title").text
                     position = first_position.find_element(By.CLASS_NAME, "t-16").text
@@ -222,9 +302,22 @@ class LinkedInScraper:
                 time.sleep(3)
                 
             except Exception as e:
-                print(f"Error processing profile {url}: {str(e)}")
+                logger.error(f"Error processing profile {url}: {str(e)}")
         
-        return results
+        # Update session info
+        self.sessions_collection.update_one(
+            {"session_id": session_id},
+            {"$set": {
+                "last_activity": datetime.now(),
+                "profiles_processed": len(results)
+            }}
+        )
+        
+        return {
+            "status": "success",
+            "message": f"Processed {len(results)} profiles",
+            "data": results
+        }
     
     def save_connection(self, connection_data):
         """Save or update connection data in MongoDB"""
@@ -236,74 +329,110 @@ class LinkedInScraper:
                 upsert=True
             )
         except Exception as e:
-            print(f"Error saving connection to MongoDB: {str(e)}")
+            logger.error(f"Error saving connection to MongoDB: {str(e)}")
     
-    def export_to_json(self, filename='linkedin_connections.json'):
-        """Export all connections from MongoDB to a JSON file"""
-        connections = list(self.connections_collection.find({}, {"_id": 0}))
+    def get_connections_from_db(self, session_id=None):
+        """Retrieve connections from MongoDB, optionally filtered by session_id"""
+        query = {}
+        if session_id:
+            query["session_id"] = session_id
         
-        # Convert datetime objects to strings for JSON serialization
-        for conn in connections:
-            if 'scraped_date' in conn and isinstance(conn['scraped_date'], datetime):
-                conn['scraped_date'] = conn['scraped_date'].isoformat()
-            if 'last_updated' in conn and isinstance(conn['last_updated'], datetime):
-                conn['last_updated'] = conn['last_updated'].isoformat()
-        
-        # Write to file
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(connections, f, ensure_ascii=False, indent=4)
-        
-        print(f"Exported {len(connections)} connections to {filename}")
+        try:
+            connections = list(self.connections_collection.find(query, {"_id": 0}))
+            
+            # Convert datetime objects to strings for JSON serialization
+            for conn in connections:
+                if 'scraped_date' in conn and isinstance(conn['scraped_date'], datetime):
+                    conn['scraped_date'] = conn['scraped_date'].isoformat()
+                if 'last_updated' in conn and isinstance(conn['last_updated'], datetime):
+                    conn['last_updated'] = conn['last_updated'].isoformat()
+            
+            return {
+                "status": "success",
+                "message": f"Found {len(connections)} connections",
+                "data": connections
+            }
+        except Exception as e:
+            error_msg = f"Error retrieving connections from DB: {str(e)}"
+            logger.error(error_msg)
+            return {"status": "error", "message": error_msg}
     
-    def close(self):
-        """Close the browser and database connection"""
-        self.driver.quit()
-        if hasattr(self, 'client'):
-            self.client.close()
-            print("Closed MongoDB connection.")
+    def cleanup_session(self, session_id):
+        """Clean up resources for a session"""
+        self.close_driver(session_id)
+        logger.info(f"Cleaned up resources for session {session_id}")
+
+# Initialize the scraper server
+scraper_server = LinkedInScraperServer()
+
+# API Endpoints
+@app.route('/api/session', methods=['POST'])
+def create_session():
+    """Create a new scraping session"""
+    session_id = request.json.get('session_id') or f"session_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    return jsonify({"status": "success", "session_id": session_id})
+
+@app.route('/api/login', methods=['POST'])
+def login():
+    """Login to LinkedIn"""
+    data = request.json
+    session_id = data.get('session_id')
+    email = data.get('email')
+    password = data.get('password')
+    
+    if not all([session_id, email, password]):
+        return jsonify({"status": "error", "message": "Missing required parameters"}), 400
+    
+    result = scraper_server.login(session_id, email, password)
+    return jsonify(result)
+
+@app.route('/api/connections', methods=['GET', 'POST'])
+def connections():
+    """Get connections from LinkedIn or from database"""
+    if request.method == 'POST':
+        # Scrape new connections
+        data = request.json
+        session_id = data.get('session_id')
+        max_connections = data.get('max_connections')
+        
+        if not session_id:
+            return jsonify({"status": "error", "message": "session_id is required"}), 400
+        
+        result = scraper_server.get_connections(session_id, max_connections)
+        return jsonify(result)
+    else:
+        # Get connections from database
+        session_id = request.args.get('session_id')
+        result = scraper_server.get_connections_from_db(session_id)
+        return jsonify(result)
+
+@app.route('/api/profiles', methods=['POST'])
+def profiles():
+    """Get detailed profile information"""
+    data = request.json
+    session_id = data.get('session_id')
+    profile_urls = data.get('profile_urls')
+    
+    if not all([session_id, profile_urls]):
+        return jsonify({"status": "error", "message": "session_id and profile_urls are required"}), 400
+    
+    if not isinstance(profile_urls, list):
+        return jsonify({"status": "error", "message": "profile_urls must be a list"}), 400
+    
+    result = scraper_server.get_detailed_profile_data(session_id, profile_urls)
+    return jsonify(result)
+
+@app.route('/api/cleanup', methods=['POST'])
+def cleanup():
+    """Clean up session resources"""
+    data = request.json
+    session_id = data.get('session_id')
+    
+    if not session_id:
+        return jsonify({"status": "error", "message": "session_id is required"}), 400
+    
+    scraper_server.cleanup_session(session_id)
+    return jsonify({"status": "success", "message": f"Session {session_id} cleaned up"})
 
 if __name__ == "__main__":
-    # Your LinkedIn credentials
-    email = "Your Email"  # Replace with your LinkedIn email
-    password = "Your Password"        # Replace with your LinkedIn password
-    
-    # MongoDB connection details
-    mongo_uri = "mongodb+srv://aadithyanmerin:AdithyanMerin@cluster0.syz6u.mongodb.net/"  # Update with your MongoDB connection URI
-    db_name = "linkedin_db"                  # Update with your preferred database name
-    
-    # Initialize the scraper with credentials and MongoDB connection
-    scraper = LinkedInScraper(
-        email=email,
-        password=password,
-        headless=False,  # Set to True if you don't want to see the browser
-        mongo_uri=mongo_uri,
-        db_name=db_name
-    )
-    
-    # Login and scrape
-    if scraper.login():
-        try:
-            # Get connections data
-            connections = scraper.get_connections(max_connections=None)  # Set to None to get all connections
-            
-            if connections:
-                print(f"Successfully scraped {len(connections)} connections")
-                
-                # Optional: Get detailed data for the first few connections
-                # Uncomment these lines if you want detailed profile data
-                # profile_urls = [conn['profile_url'] for conn in connections[:10]]
-                # detailed_data = scraper.get_detailed_profile_data(profile_urls)
-                
-                # Export all data to JSON (optional)
-                scraper.export_to_json()
-                
-                print(f"All connection data has been saved to MongoDB database: {db_name}")
-            
-        except Exception as e:
-            print(f"Error occurred: {str(e)}")
-        
-        finally:
-            # Clean up
-            scraper.close()
-    else:
-        print("Unable to login. Exiting.")
+    app.run(host='0.0.0.0', port=5000, threaded=True)

@@ -616,8 +616,8 @@ class LinkedInScraper:
 
 if __name__ == "__main__":
     # Your LinkedIn credentials
-    email = "Enter your Email"  # Replace with your LinkedIn email
-    password = "Enter your Password"        # Replace with your LinkedIn password
+    email = "Enter your Email"  
+    password = "Enter your Password"       
     
     # MongoDB connection details
     mongo_uri = "mongodb+srv://aadithyanmerin:AdithyanMerin@cluster0.syz6u.mongodb.net/"  # Update with your MongoDB connection URI
