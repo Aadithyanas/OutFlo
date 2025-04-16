@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { Campaign, LinkedInProfile, PersonalizedMessage } from './types';
 
-const API_BASE_URL = 'http://localhost:3000'; // Update with your backend URL
+const API_BASE_URL = 'https://outflo-siy0.onrender.com'; // Update with your backend URL
 
 export const api = {
   // Campaign APIs
