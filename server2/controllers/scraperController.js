@@ -1,7 +1,11 @@
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const config = require('../config/config');
 const Connection = require('../models/connections');
-require('dotenv').config()
+require('dotenv').config();
+
+// Add stealth plugin to avoid detection
+puppeteer.use(StealthPlugin());
 
 class LinkedInScraperService {
   constructor() {
@@ -10,6 +14,8 @@ class LinkedInScraperService {
     this.headless = config.headless;
     this.browser = null;
     this.page = null;
+    this.maxRetries = 3;
+    this.requestDelay = 2000; // Delay between requests to avoid rate limiting
   }
 
   setCredentials(email, password) {
@@ -19,26 +25,44 @@ class LinkedInScraperService {
 
   async initialize() {
     try {
-      // Launch the browser
+      // Launch the browser with more stealth options
       this.browser = await puppeteer.launch({
-        
+        headless: this.headless,
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
           '--disable-gpu',
           '--disable-notifications',
-          '--window-size=1920,1080'
+          '--window-size=1920,1080',
+          '--disable-web-security',
+          '--disable-features=IsolateOrigins,site-per-process'
         ],
         defaultViewport: { width: 1920, height: 1080 },
-        
+        ignoreHTTPSErrors: true,
       });
 
-      // Create a new page
+      // Create a new page with randomized viewport
       this.page = await this.browser.newPage();
       
-      // Set user agent to avoid detection
-      await this.page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36');
+      // Set randomized user agent to avoid detection
+      const userAgents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0'
+      ];
+      const randomUserAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
+      await this.page.setUserAgent(randomUserAgent);
+      
+      // Disable images and stylesheets for faster loading
+      await this.page.setRequestInterception(true);
+      this.page.on('request', (req) => {
+        if (['image', 'stylesheet', 'font'].includes(req.resourceType())) {
+          req.abort();
+        } else {
+          req.continue();
+        }
+      });
       
       return true;
     } catch (error) {
@@ -47,7 +71,6 @@ class LinkedInScraperService {
     }
   }
 
-  // Helper function for waiting/timeout since waitForTimeout might not be available
   async delay(time) {
     return new Promise(resolve => setTimeout(resolve, time));
   }
@@ -61,32 +84,57 @@ class LinkedInScraperService {
       await this.initialize();
     }
 
-    try {
-      console.log("Logging in to LinkedIn...");
-      await this.page.goto('https://www.linkedin.com/login', { waitUntil: 'networkidle2' });
+    let retries = 0;
+    while (retries < this.maxRetries) {
+      try {
+        console.log("Logging in to LinkedIn...");
+        await this.page.goto('https://www.linkedin.com/login', { 
+          waitUntil: 'networkidle2',
+          timeout: 30000 
+        });
 
-      // Enter email
-      await this.page.waitForSelector('#username', { timeout: 10000 });
-      await this.page.type('#username', this.email);
+        // Clear cookies first
+        await this.page.deleteCookie();
 
-      // Enter password
-      await this.page.type('#password', this.password);
+        // Enter email
+        await this.page.waitForSelector('#username', { timeout: 10000 });
+        await this.page.type('#username', this.email, { delay: 100 }); // Simulate human typing
 
-      // Click login button
-      await this.page.click("button[type='submit']");
+        // Enter password
+        await this.page.type('#password', this.password, { delay: 150 });
 
-      // Wait for login to complete (for the global navigation to appear)
-      await this.page.waitForSelector('#global-nav', { timeout: 10000 });
-      console.log("Successfully logged in!");
-      return true;
-    } catch (error) {
-      console.error(`Login error: ${error}`);
-      return false;
+        // Click login button
+        await Promise.all([
+          this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }),
+          this.page.click("button[type='submit']")
+        ]);
+
+        // Check if login was successful
+        try {
+          await this.page.waitForSelector('#global-nav', { timeout: 10000 });
+          console.log("Successfully logged in!");
+          return true;
+        } catch (e) {
+          // Check for captcha
+          const captchaExists = await this.page.$('#captcha-internal');
+          if (captchaExists) {
+            throw new Error("CAPTCHA detected. Please solve it manually or try again later.");
+          }
+          throw e;
+        }
+      } catch (error) {
+        retries++;
+        console.error(`Login attempt ${retries} failed: ${error}`);
+        if (retries >= this.maxRetries) {
+          throw error;
+        }
+        await this.delay(5000); // Wait before retrying
+      }
     }
+    return false;
   }
 
   async getConnections(email, password, maxConnections = null) {
-    // Set credentials
     this.setCredentials(email, password);
 
     if (!this.browser || !this.page) {
@@ -99,38 +147,43 @@ class LinkedInScraperService {
       if (!loggedIn) return { success: false, message: "Failed to login with provided credentials" };
 
       console.log("Navigating to connections page...");
-      await this.page.goto('https://www.linkedin.com/mynetwork/invite-connect/connections/', { waitUntil: 'networkidle2' });
+      await this.page.goto('https://www.linkedin.com/mynetwork/invite-connect/connections/', { 
+        waitUntil: 'networkidle2',
+        timeout: 30000 
+      });
 
       // Wait for the connections list to load
       await this.page.waitForSelector('.mn-connection-card', { timeout: 10000 });
 
       console.log("Scrolling to load all connections...");
-      // Scroll down to load more connections
       let connectionsScraped = 0;
-      let lastHeight = await this.page.evaluate(() => document.body.scrollHeight);
+      let lastHeight = 0;
+      let currentHeight = await this.page.evaluate(() => document.body.scrollHeight);
+      const maxScrollAttempts = 20;
+      let scrollAttempts = 0;
 
-      while (true) {
-        // Scroll down
+      while (scrollAttempts < maxScrollAttempts) {
+        lastHeight = currentHeight;
         await this.page.evaluate(() => {
           window.scrollTo(0, document.body.scrollHeight);
         });
-
-        // Wait for page to load
+        
+        // Wait for content to load
         await this.delay(2000);
-
-        // Calculate new scroll height and compare with last scroll height
-        let newHeight = await this.page.evaluate(() => document.body.scrollHeight);
-
+        
+        currentHeight = await this.page.evaluate(() => document.body.scrollHeight);
+        
         // Count visible connections
-        let connections = await this.page.$$('.mn-connection-card');
+        const connections = await this.page.$$('.mn-connection-card');
         connectionsScraped = connections.length;
         console.log(`Loaded ${connectionsScraped} connections so far...`);
 
         // Check if we've reached the end or hit maxConnections
-        if (newHeight === lastHeight || (maxConnections && connectionsScraped >= maxConnections)) {
+        if (currentHeight === lastHeight || (maxConnections && connectionsScraped >= maxConnections)) {
           break;
         }
-        lastHeight = newHeight;
+        
+        scrollAttempts++;
       }
 
       console.log(`Loaded ${connectionsScraped} connections. Now extracting data...`);
@@ -139,7 +192,7 @@ class LinkedInScraperService {
       console.error(`Error getting connections: ${error}`);
       return { success: false, message: error.toString() };
     } finally {
-      await this.close(); // This will run whether the scraping succeeds or fails
+      await this.close();
     }
   }
 
@@ -159,11 +212,20 @@ class LinkedInScraperService {
         try {
           const connection = connectionsToProcess[idx];
           
+          // Scroll the connection into view
+          await this.page.evaluate((el) => {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }, connection);
+          
+          await this.delay(500); // Small delay after scrolling
+          
           // Extract profile URL
           const profileUrl = await this.page.evaluate(el => {
             const link = el.querySelector('.mn-connection-card__link');
             return link ? link.href.split('?')[0] : null;
           }, connection);
+          
+          if (!profileUrl) continue; // Skip if no profile URL
           
           // Extract name
           const name = await this.page.evaluate(el => {
@@ -177,6 +239,17 @@ class LinkedInScraperService {
             return headlineEl ? headlineEl.textContent.trim() : "";
           }, connection);
           
+          // Extract connection date if available
+          let connectionDate = "";
+          try {
+            connectionDate = await this.page.evaluate(el => {
+              const dateEl = el.querySelector('.time-badge');
+              return dateEl ? dateEl.textContent.trim() : "";
+            }, connection);
+          } catch (e) {
+            console.log("Could not extract connection date");
+          }
+          
           // Build connection data
           const connectionData = {
             profile_url: profileUrl,
@@ -185,9 +258,9 @@ class LinkedInScraperService {
             location: "",
             company: "",
             position: "",
-            connection_date: "",
+            connection_date: connectionDate,
             scraped_date: new Date(),
-            user_email: this.email // Associate connections with the user who scraped them
+            user_email: this.email
           };
           
           // Save to MongoDB
@@ -197,6 +270,7 @@ class LinkedInScraperService {
           
           if ((idx + 1) % 10 === 0) {
             console.log(`Processed ${idx + 1}/${total} connections...`);
+            await this.delay(1000); // Add delay every 10 connections
           }
         } catch (e) {
           console.error(`Error extracting data for connection ${idx + 1}: ${e}`);
@@ -211,7 +285,6 @@ class LinkedInScraperService {
   }
 
   async getDetailedProfileData(email, password, urls) {
-    // Set credentials
     this.setCredentials(email, password);
 
     if (!this.browser || !this.page) {
@@ -228,55 +301,91 @@ class LinkedInScraperService {
       
       for (let idx = 0; idx < urls.length; idx++) {
         const url = urls[idx];
-        try {
-          console.log(`Visiting profile ${idx + 1}/${urls.length}: ${url}`);
-          await this.page.goto(url, { waitUntil: 'networkidle2' });
-          await this.delay(2000); // Allow page to fully load
-          
-          // Extract location
-          let location = "";
+        let retries = 0;
+        let success = false;
+        
+        while (retries < this.maxRetries && !success) {
           try {
-            location = await this.page.$eval("span.text-body-small.inline", el => el.textContent.trim());
-          } catch (e) {
-            // Location not available
-          }
-          
-          // Get current company and position
-          let company = "";
-          let position = "";
-          try {
-            await this.page.waitForSelector('#experience-section', { timeout: 5000 });
+            console.log(`Visiting profile ${idx + 1}/${urls.length}: ${url}`);
+            await this.page.goto(url, { 
+              waitUntil: 'networkidle2',
+              timeout: 30000 
+            });
             
-            position = await this.page.$eval('#experience-section li .t-16', el => el.textContent.trim());
-            company = await this.page.$eval('#experience-section li .pv-entity__secondary-title', el => el.textContent.trim());
-          } catch (e) {
-            // Experience details not available
-          }
-          
-          // Update MongoDB with detailed info
-          await Connection.findOneAndUpdate(
-            { profile_url: url, user_email: this.email },
-            {
+            // Random delay between 2-5 seconds
+            await this.delay(2000 + Math.random() * 3000);
+            
+            // Extract location
+            let location = "";
+            try {
+              location = await this.page.$eval(".text-body-small.inline.t-black--light", el => el.textContent.trim());
+            } catch (e) {
+              console.log("Location not available for this profile");
+            }
+            
+            // Get current company and position
+            let company = "";
+            let position = "";
+            try {
+              await this.page.waitForSelector('#experience-section', { timeout: 5000 });
+              
+              const experienceSection = await this.page.$('#experience-section');
+              if (experienceSection) {
+                position = await experienceSection.$eval('.t-16', el => el.textContent.trim());
+                company = await experienceSection.$eval('.pv-entity__secondary-title', el => el.textContent.trim());
+              }
+            } catch (e) {
+              console.log("Experience details not available for this profile");
+            }
+            
+            // Extract about section if available
+            let about = "";
+            try {
+              await this.page.waitForSelector('#about-section', { timeout: 3000 });
+              about = await this.page.$eval('#about-section .pv-about__summary-text', el => el.textContent.trim());
+            } catch (e) {
+              // About section not available
+            }
+            
+            // Update MongoDB with detailed info
+            await Connection.findOneAndUpdate(
+              { profile_url: url, user_email: this.email },
+              {
+                location: location,
+                company: company,
+                position: position,
+                about: about,
+                last_updated: new Date()
+              },
+              { new: true, upsert: true }
+            );
+            
+            results.push({
+              profile_url: url,
               location: location,
               company: company,
               position: position,
-              last_updated: new Date()
-            },
-            { new: true }
-          );
-          
-          results.push({
-            profile_url: url,
-            location: location,
-            company: company,
-            position: position
-          });
-          
-          // Be nice to LinkedIn servers
-          await this.delay(3000);
-        } catch (e) {
-          console.error(`Error processing profile ${url}: ${e}`);
+              about: about
+            });
+            
+            success = true;
+          } catch (e) {
+            retries++;
+            console.error(`Error processing profile ${url} (attempt ${retries}): ${e}`);
+            if (retries >= this.maxRetries) {
+              console.error(`Failed to process profile ${url} after ${this.maxRetries} attempts`);
+              results.push({
+                profile_url: url,
+                error: `Failed after ${this.maxRetries} attempts: ${e.message}`
+              });
+            } else {
+              await this.delay(5000); // Wait before retrying
+            }
+          }
         }
+        
+        // Be nice to LinkedIn servers - random delay between requests
+        await this.delay(this.requestDelay + Math.random() * 2000);
       }
       
       return { success: true, data: results };
@@ -284,25 +393,27 @@ class LinkedInScraperService {
       console.error(`Error getting detailed profile data: ${error}`);
       return { success: false, message: error.toString() };
     } finally {
-      await this.close(); // This will run whether the scraping succeeds or fails
+      await this.close();
     }
   }
 
   async saveConnection(connectionData) {
     try {
-      await Connection.findOneAndUpdate(
+      const result = await Connection.findOneAndUpdate(
         { profile_url: connectionData.profile_url, user_email: connectionData.user_email },
         connectionData,
         { upsert: true, new: true }
       );
+      return result;
     } catch (error) {
       console.error(`Error saving connection to MongoDB: ${error}`);
+      throw error;
     }
   }
 
   async exportToJson(userEmail) {
     try {
-      const connections = await Connection.find({ user_email: userEmail }, { _id: 0 }).lean();
+      const connections = await Connection.find({ user_email: userEmail }, { _id: 0, __v: 0 }).lean();
       return { success: true, data: connections };
     } catch (error) {
       console.error(`Error exporting connections: ${error}`);
@@ -312,12 +423,15 @@ class LinkedInScraperService {
 
   async close() {
     try {
+      if (this.page) {
+        await this.page.close();
+        this.page = null;
+      }
       if (this.browser) {
         await this.browser.close();
         this.browser = null;
-        this.page = null;
-        console.log("Browser closed");
       }
+      console.log("Browser closed successfully");
     } catch (error) {
       console.error(`Error closing browser: ${error}`);
     }
