@@ -30,17 +30,23 @@ class LinkedInScraperService {
         console.log("Captcha directory already exists or could not be created")
       }
 
-      // Launch the browser
+      // Launch the browser with proper flags for cloud environments
       this.browser = await puppeteer.launch({
-        headless: this.headless,
+        headless: true, // Must be true for Render
         args: [
           "--no-sandbox",
+          "--disable-setuid-sandbox",
           "--disable-dev-shm-usage",
+          "--disable-accelerated-2d-canvas",
+          "--no-first-run",
+          "--no-zygote",
+          "--single-process",
           "--disable-gpu",
           "--window-size=1920,1080",
           "--disable-notifications",
         ],
         defaultViewport: { width: 1920, height: 1080 },
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null,
       })
 
       // Create a new page
@@ -479,7 +485,7 @@ class LinkedInScraperService {
 
       // Prepare the request to Gemini API
       const response = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${this.geminiApiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-vision:generateContent?key=${this.geminiApiKey}`,
         {
           contents: [
             {
