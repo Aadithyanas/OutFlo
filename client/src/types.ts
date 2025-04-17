@@ -1,4 +1,5 @@
 export interface Campaign {
+  createdAt: number;
   _id?: string;
   
   name: string;
