@@ -23,10 +23,11 @@ class LinkedInScraperService {
         headless: this.headless ? (puppeteer.isHeadlessSupported ? 'new' : true) : false,
         args: [
           '--no-sandbox',
+          '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
           '--disable-gpu',
-          '--window-size=1920,1080',
-          '--disable-notifications'
+          '--disable-notifications',
+          '--window-size=1920,1080'
         ],
         defaultViewport: { width: 1920, height: 1080 }
       });
