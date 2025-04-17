@@ -1,5 +1,4 @@
-const { Builder, By, until } = require('selenium-webdriver');
-const chrome = require('selenium-webdriver/chrome');
+const puppeteer = require('puppeteer');
 const config = require('../config/config');
 const Connection = require('../models/connections');
 
@@ -8,7 +7,8 @@ class LinkedInScraperService {
     this.email = null;
     this.password = null;
     this.headless = config.headless;
-    this.driver = null;
+    this.browser = null;
+    this.page = null;
   }
 
   setCredentials(email, password) {
@@ -18,28 +18,35 @@ class LinkedInScraperService {
 
   async initialize() {
     try {
-      // Setup Chrome options
-      let options = new chrome.Options();
-      if (this.headless) {
-        options.addArguments('--headless');
-      }
-      options.addArguments('--no-sandbox');
-      options.addArguments('--disable-dev-shm-usage');
-      options.addArguments('--disable-gpu');
-      options.addArguments('--window-size=1920,1080');
-      options.addArguments('--disable-notifications');
+      // Launch the browser
+      this.browser = await puppeteer.launch({
+        headless: this.headless ? (puppeteer.isHeadlessSupported ? 'new' : true) : false,
+        args: [
+          '--no-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--window-size=1920,1080',
+          '--disable-notifications'
+        ],
+        defaultViewport: { width: 1920, height: 1080 }
+      });
 
-      // Initialize the Chrome driver
-      this.driver = await new Builder()
-        .forBrowser('chrome')
-        .setChromeOptions(options)
-        .build();
-
+      // Create a new page
+      this.page = await this.browser.newPage();
+      
+      // Set user agent to avoid detection
+      await this.page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36');
+      
       return true;
     } catch (error) {
-      console.error(`Error initializing driver: ${error}`);
+      console.error(`Error initializing browser: ${error}`);
       return false;
     }
+  }
+
+  // Helper function for waiting/timeout since waitForTimeout might not be available
+  async delay(time) {
+    return new Promise(resolve => setTimeout(resolve, time));
   }
 
   async login() {
@@ -47,28 +54,26 @@ class LinkedInScraperService {
       throw new Error("LinkedIn credentials not provided");
     }
 
-    if (!this.driver) {
+    if (!this.browser || !this.page) {
       await this.initialize();
     }
 
     try {
       console.log("Logging in to LinkedIn...");
-      await this.driver.get('https://www.linkedin.com/login');
+      await this.page.goto('https://www.linkedin.com/login', { waitUntil: 'networkidle2' });
 
       // Enter email
-      const emailField = await this.driver.wait(until.elementLocated(By.id('username')), 10000);
-      await emailField.sendKeys(this.email);
+      await this.page.waitForSelector('#username', { timeout: 10000 });
+      await this.page.type('#username', this.email);
 
       // Enter password
-      const passwordField = await this.driver.findElement(By.id('password'));
-      await passwordField.sendKeys(this.password);
+      await this.page.type('#password', this.password);
 
       // Click login button
-      const loginButton = await this.driver.findElement(By.xpath("//button[@type='submit']"));
-      await loginButton.click();
+      await this.page.click("button[type='submit']");
 
-      // Wait for login to complete
-      await this.driver.wait(until.elementLocated(By.id('global-nav')), 10000);
+      // Wait for login to complete (for the global navigation to appear)
+      await this.page.waitForSelector('#global-nav', { timeout: 10000 });
       console.log("Successfully logged in!");
       return true;
     } catch (error) {
@@ -81,9 +86,9 @@ class LinkedInScraperService {
     // Set credentials
     this.setCredentials(email, password);
 
-    if (!this.driver) {
+    if (!this.browser || !this.page) {
       const initialized = await this.initialize();
-      if (!initialized) return { success: false, message: "Failed to initialize driver" };
+      if (!initialized) return { success: false, message: "Failed to initialize browser" };
     }
 
     try {
@@ -91,28 +96,30 @@ class LinkedInScraperService {
       if (!loggedIn) return { success: false, message: "Failed to login with provided credentials" };
 
       console.log("Navigating to connections page...");
-      await this.driver.get('https://www.linkedin.com/mynetwork/invite-connect/connections/');
+      await this.page.goto('https://www.linkedin.com/mynetwork/invite-connect/connections/', { waitUntil: 'networkidle2' });
 
       // Wait for the connections list to load
-      await this.driver.wait(until.elementLocated(By.className('mn-connection-card')), 10000);
+      await this.page.waitForSelector('.mn-connection-card', { timeout: 10000 });
 
       console.log("Scrolling to load all connections...");
       // Scroll down to load more connections
       let connectionsScraped = 0;
-      let lastHeight = await this.driver.executeScript("return document.body.scrollHeight");
+      let lastHeight = await this.page.evaluate(() => document.body.scrollHeight);
 
       while (true) {
         // Scroll down
-        await this.driver.executeScript("window.scrollTo(0, document.body.scrollHeight);");
+        await this.page.evaluate(() => {
+          window.scrollTo(0, document.body.scrollHeight);
+        });
 
         // Wait for page to load
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await this.delay(2000);
 
         // Calculate new scroll height and compare with last scroll height
-        let newHeight = await this.driver.executeScript("return document.body.scrollHeight");
+        let newHeight = await this.page.evaluate(() => document.body.scrollHeight);
 
         // Count visible connections
-        let connections = await this.driver.findElements(By.className('mn-connection-card'));
+        let connections = await this.page.$$('.mn-connection-card');
         connectionsScraped = connections.length;
         console.log(`Loaded ${connectionsScraped} connections so far...`);
 
@@ -132,9 +139,11 @@ class LinkedInScraperService {
       await this.close(); // This will run whether the scraping succeeds or fails
     }
   }
+
   async extractConnectionData(maxConnections = null) {
     try {
-      const connections = await this.driver.findElements(By.className('mn-connection-card'));
+      // Get all connection cards
+      const connections = await this.page.$$('.mn-connection-card');
       
       const connectionsToProcess = maxConnections ? connections.slice(0, maxConnections) : connections;
       
@@ -148,21 +157,22 @@ class LinkedInScraperService {
           const connection = connectionsToProcess[idx];
           
           // Extract profile URL
-          const profileLink = await connection.findElement(By.className('mn-connection-card__link'));
-          const profileUrl = (await profileLink.getAttribute('href')).split('?')[0];
+          const profileUrl = await this.page.evaluate(el => {
+            const link = el.querySelector('.mn-connection-card__link');
+            return link ? link.href.split('?')[0] : null;
+          }, connection);
           
           // Extract name
-          const nameElem = await connection.findElement(By.className('mn-connection-card__name'));
-          const name = await nameElem.getText();
+          const name = await this.page.evaluate(el => {
+            const nameEl = el.querySelector('.mn-connection-card__name');
+            return nameEl ? nameEl.textContent.trim() : null;
+          }, connection);
           
           // Extract headline (job title)
-          let headline = "";
-          try {
-            const headlineElem = await connection.findElement(By.className('mn-connection-card__occupation'));
-            headline = await headlineElem.getText();
-          } catch (e) {
-            // Headline not available
-          }
+          let headline = await this.page.evaluate(el => {
+            const headlineEl = el.querySelector('.mn-connection-card__occupation');
+            return headlineEl ? headlineEl.textContent.trim() : "";
+          }, connection);
           
           // Build connection data
           const connectionData = {
@@ -197,14 +207,13 @@ class LinkedInScraperService {
     }
   }
 
-  
   async getDetailedProfileData(email, password, urls) {
     // Set credentials
     this.setCredentials(email, password);
 
-    if (!this.driver) {
+    if (!this.browser || !this.page) {
       const initialized = await this.initialize();
-      if (!initialized) return { success: false, message: "Failed to initialize driver" };
+      if (!initialized) return { success: false, message: "Failed to initialize browser" };
     }
 
     try {
@@ -218,14 +227,13 @@ class LinkedInScraperService {
         const url = urls[idx];
         try {
           console.log(`Visiting profile ${idx + 1}/${urls.length}: ${url}`);
-          await this.driver.get(url);
-          await new Promise(resolve => setTimeout(resolve, 2000)); // Allow page to load
+          await this.page.goto(url, { waitUntil: 'networkidle2' });
+          await this.delay(2000); // Allow page to fully load
           
           // Extract location
           let location = "";
           try {
-            const locationElem = await this.driver.findElement(By.xpath("//span[contains(@class, 'text-body-small') and contains(@class, 'inline')]"));
-            location = await locationElem.getText();
+            location = await this.page.$eval("span.text-body-small.inline", el => el.textContent.trim());
           } catch (e) {
             // Location not available
           }
@@ -234,12 +242,10 @@ class LinkedInScraperService {
           let company = "";
           let position = "";
           try {
-            const experienceSection = await this.driver.findElement(By.id("experience-section"));
-            const firstPosition = await experienceSection.findElement(By.tagName("li"));
-            const companyElem = await firstPosition.findElement(By.className("pv-entity__secondary-title"));
-            company = await companyElem.getText();
-            const positionElem = await firstPosition.findElement(By.className("t-16"));
-            position = await positionElem.getText();
+            await this.page.waitForSelector('#experience-section', { timeout: 5000 });
+            
+            position = await this.page.$eval('#experience-section li .t-16', el => el.textContent.trim());
+            company = await this.page.$eval('#experience-section li .pv-entity__secondary-title', el => el.textContent.trim());
           } catch (e) {
             // Experience details not available
           }
@@ -264,7 +270,7 @@ class LinkedInScraperService {
           });
           
           // Be nice to LinkedIn servers
-          await new Promise(resolve => setTimeout(resolve, 3000));
+          await this.delay(3000);
         } catch (e) {
           console.error(`Error processing profile ${url}: ${e}`);
         }
@@ -303,9 +309,10 @@ class LinkedInScraperService {
 
   async close() {
     try {
-      if (this.driver) {
-        await this.driver.quit();
-        this.driver = null;
+      if (this.browser) {
+        await this.browser.close();
+        this.browser = null;
+        this.page = null;
         console.log("Browser closed");
       }
     } catch (error) {
