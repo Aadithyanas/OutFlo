@@ -1,7 +1,6 @@
 const puppeteer = require('puppeteer');
 const config = require('../config/config');
 const Connection = require('../models/connections');
-require('dotenv').config()
 
 class LinkedInScraperService {
   constructor() {
@@ -13,7 +12,6 @@ class LinkedInScraperService {
   }
 
   setCredentials(email, password) {
-    console.log(email,password)
     this.email = email;
     this.password = password;
   }
@@ -22,17 +20,15 @@ class LinkedInScraperService {
     try {
       // Launch the browser
       this.browser = await puppeteer.launch({
-        
+        headless: this.headless ? (puppeteer.isHeadlessSupported ? 'new' : true) : false,
         args: [
           '--no-sandbox',
-          '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
           '--disable-gpu',
-          '--disable-notifications',
-          '--window-size=1920,1080'
+          '--window-size=1920,1080',
+          '--disable-notifications'
         ],
-        defaultViewport: { width: 1920, height: 1080 },
-        
+        defaultViewport: { width: 1920, height: 1080 }
       });
 
       // Create a new page
@@ -63,7 +59,6 @@ class LinkedInScraperService {
     }
 
     try {
-      console.log(this.email,this.password)
       console.log("Logging in to LinkedIn...");
       await this.page.goto('https://www.linkedin.com/login', { waitUntil: 'networkidle2' });
 
