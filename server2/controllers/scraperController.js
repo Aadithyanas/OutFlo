@@ -20,7 +20,7 @@ class LinkedInScraperService {
     try {
       // Launch the browser
       this.browser = await puppeteer.launch({
-        headless: this.headless ? (puppeteer.isHeadlessSupported ? 'new' : true) : false,
+        
         args: [
           '--no-sandbox',
           '--disable-dev-shm-usage',
