@@ -31,7 +31,7 @@ class LinkedInScraperService {
           '--window-size=1920,1080'
         ],
         defaultViewport: { width: 1920, height: 1080 },
-        executablePath: process.env.NODE_ENV==="production" ? process.env.PUPPETEER_EXECUTABLE_PATH : puppeteer.executablePath(),
+        
       });
 
       // Create a new page
