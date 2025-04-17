@@ -27,7 +27,7 @@ class LinkedInScraperService {
     try {
       // Launch the browser with more stealth options
       this.browser = await puppeteer.launch({
-        headless: this.headless,
+       
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
@@ -39,7 +39,7 @@ class LinkedInScraperService {
           '--disable-features=IsolateOrigins,site-per-process'
         ],
         defaultViewport: { width: 1920, height: 1080 },
-        ignoreHTTPSErrors: true,
+        
       });
 
       // Create a new page with randomized viewport
