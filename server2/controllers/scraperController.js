@@ -82,8 +82,17 @@ class LinkedInScraperService {
       console.log("Logging in to LinkedIn...")
       await this.page.goto("https://www.linkedin.com/login", { waitUntil: "networkidle2" })
 
+      // Take a screenshot to debug
+      const loginScreenshot = path.join(this.captchaDir, `login_screen_${Date.now()}.png`)
+      await this.page.screenshot({ path: loginScreenshot, fullPage: true })
+      console.log(`Saved login screenshot to ${loginScreenshot}`)
+
       // Enter email
-      await this.page.waitForSelector("#username", { timeout: 10000 })
+      await this.page.waitForSelector("#username", { timeout: 10000 }).catch((error) => {
+        console.error("Username field not found:", error.message)
+        throw new Error("Username field not found")
+      })
+
       await this.page.type("#username", this.email)
 
       // Enter password
@@ -93,7 +102,12 @@ class LinkedInScraperService {
       await this.page.click("button[type='submit']")
 
       // Wait for a short time to see if verification appears
-      await this.delay(3000)
+      await this.delay(5000)
+
+      // Take a screenshot after login attempt
+      const afterLoginScreenshot = path.join(this.captchaDir, `after_login_${Date.now()}.png`)
+      await this.page.screenshot({ path: afterLoginScreenshot, fullPage: true })
+      console.log(`Saved post-login screenshot to ${afterLoginScreenshot}`)
 
       // Check for verification challenge
       const hasVerification = await this.checkForVerification()
@@ -105,21 +119,110 @@ class LinkedInScraperService {
         }
       }
 
+      // Check if we're already logged in by looking for common elements
+      const isLoggedIn = await this.checkIfLoggedIn()
+      if (isLoggedIn) {
+        console.log("Successfully logged in!")
+        return true
+      }
+
       // Wait for login to complete (for the global navigation to appear)
-      await this.page.waitForSelector("#global-nav", { timeout: 10000 }).catch(async () => {
-        // If global-nav doesn't appear, check again for verification
+      try {
+        await this.page.waitForSelector("#global-nav", { timeout: 15000 })
+        console.log("Successfully logged in!")
+        return true
+      } catch (error) {
+        console.error(`Error waiting for global-nav: ${error}`)
+
+        // Take another screenshot to see what happened
+        const timeoutScreenshot = path.join(this.captchaDir, `timeout_screen_${Date.now()}.png`)
+        await this.page.screenshot({ path: timeoutScreenshot, fullPage: true })
+        console.log(`Saved timeout screenshot to ${timeoutScreenshot}`)
+
+        // Check if we're on a different page that indicates successful login
+        const isLoggedInRetry = await this.checkIfLoggedIn()
+        if (isLoggedInRetry) {
+          console.log("Successfully logged in despite not finding global-nav!")
+          return true
+        }
+
+        // Check again for verification
         const hasVerificationRetry = await this.checkForVerification()
         if (hasVerificationRetry) {
           await this.handleVerification()
+          // Check one more time if we're logged in
+          return await this.checkIfLoggedIn()
         }
-        // Try waiting for global-nav again
-        await this.page.waitForSelector("#global-nav", { timeout: 10000 })
-      })
 
-      console.log("Successfully logged in!")
-      return true
+        return false
+      }
     } catch (error) {
       console.error(`Login error: ${error}`)
+      return false
+    }
+  }
+
+  async checkIfLoggedIn() {
+    try {
+      // Check for various elements that indicate we're logged in
+      const loggedInSelectors = [
+        "#global-nav", // Main navigation
+        ".feed-identity-module", // Feed identity module
+        ".search-global-typeahead", // Search bar
+        ".global-nav__me", // Me dropdown
+        "a[href='/feed/']", // Feed link
+        "a[href='/mynetwork/']", // My Network link
+        "a[href='/jobs/']", // Jobs link
+        "a[href='/messaging/']", // Messaging link
+        "a[href='/notifications/']", // Notifications link
+      ]
+
+      for (const selector of loggedInSelectors) {
+        const hasElement = await this.page.evaluate((sel) => {
+          return document.querySelector(sel) !== null
+        }, selector)
+
+        if (hasElement) {
+          console.log(`Logged in status confirmed by selector: ${selector}`)
+          return true
+        }
+      }
+
+      // Check for text that might indicate we're logged in
+      const pageText = await this.page.evaluate(() => document.body.innerText)
+      const loggedInTexts = [
+        "Home",
+        "My Network",
+        "Jobs",
+        "Messaging",
+        "Notifications",
+        "Search",
+        "Profile",
+        "Work",
+        "Premium",
+      ]
+
+      for (const text of loggedInTexts) {
+        if (pageText.includes(text)) {
+          console.log(`Logged in status confirmed by text: ${text}`)
+          return true
+        }
+      }
+
+      // Check URL to see if we're redirected to feed or homepage
+      const currentUrl = this.page.url()
+      if (
+        currentUrl.includes("linkedin.com/feed") ||
+        currentUrl.includes("linkedin.com/home") ||
+        currentUrl.includes("linkedin.com/mynetwork")
+      ) {
+        console.log(`Logged in status confirmed by URL: ${currentUrl}`)
+        return true
+      }
+
+      return false
+    } catch (error) {
+      console.error(`Error checking if logged in: ${error}`)
       return false
     }
   }
@@ -136,8 +239,6 @@ class LinkedInScraperService {
         ".captcha-container", // CAPTCHA container
         ".verification-challenge", // Verification challenge
         'button[aria-label*="verify"]', // Verify button
-        'button:contains("Verify")', // Verify button text
-        ".verification-image", // Verification image
       ]
 
       for (const selector of verificationSelectors) {
@@ -149,6 +250,17 @@ class LinkedInScraperService {
           console.log(`Verification detected with selector: ${selector}`)
           return true
         }
+      }
+
+      // Check for buttons with "verify" text (using proper DOM methods, not jQuery)
+      const hasVerifyButton = await this.page.evaluate(() => {
+        const buttons = Array.from(document.querySelectorAll("button"))
+        return buttons.some((button) => button.textContent && button.textContent.toLowerCase().includes("verify"))
+      })
+
+      if (hasVerifyButton) {
+        console.log("Verification detected with button containing 'verify' text")
+        return true
       }
 
       // Check for text that might indicate verification
@@ -230,12 +342,12 @@ class LinkedInScraperService {
         return true
       }
 
-      // Look for a verify button
+      // Look for a verify button (using proper DOM methods, not jQuery)
       const verifyButton = await this.page.evaluate(() => {
         const buttons = Array.from(document.querySelectorAll("button"))
         const verifyBtn = buttons.find(
           (btn) =>
-            btn.innerText.toLowerCase().includes("verify") ||
+            (btn.textContent && btn.textContent.toLowerCase().includes("verify")) ||
             (btn.getAttribute("aria-label") && btn.getAttribute("aria-label").toLowerCase().includes("verify")),
         )
         return verifyBtn ? true : false
@@ -247,7 +359,7 @@ class LinkedInScraperService {
           const buttons = Array.from(document.querySelectorAll("button"))
           const verifyBtn = buttons.find(
             (btn) =>
-              btn.innerText.toLowerCase().includes("verify") ||
+              (btn.textContent && btn.textContent.toLowerCase().includes("verify")) ||
               (btn.getAttribute("aria-label") && btn.getAttribute("aria-label").toLowerCase().includes("verify")),
           )
           if (verifyBtn) verifyBtn.click()
@@ -332,7 +444,9 @@ class LinkedInScraperService {
           await this.page.evaluate(() => {
             const buttons = Array.from(document.querySelectorAll("button"))
             const submitBtn = buttons.find((btn) =>
-              ["submit", "verify", "continue", "next"].some((text) => btn.innerText.toLowerCase().includes(text)),
+              ["submit", "verify", "continue", "next"].some(
+                (text) => btn.textContent && btn.textContent.toLowerCase().includes(text),
+              ),
             )
             if (submitBtn) submitBtn.click()
           })
@@ -373,7 +487,9 @@ class LinkedInScraperService {
             await this.page.evaluate(() => {
               const buttons = Array.from(document.querySelectorAll("button"))
               const submitBtn = buttons.find((btn) =>
-                ["submit", "verify", "continue", "next"].some((text) => btn.innerText.toLowerCase().includes(text)),
+                ["submit", "verify", "continue", "next"].some(
+                  (text) => btn.textContent && btn.textContent.toLowerCase().includes(text),
+                ),
               )
               if (submitBtn) submitBtn.click()
             })
@@ -523,7 +639,7 @@ class LinkedInScraperService {
             const elements = Array.from(document.querySelectorAll("button, a, div, span"))
             const element = elements.find(
               (el) =>
-                el.innerText.toLowerCase().includes(text.toLowerCase()) ||
+                (el.textContent && el.textContent.toLowerCase().includes(text.toLowerCase())) ||
                 (el.getAttribute("aria-label") &&
                   el.getAttribute("aria-label").toLowerCase().includes(text.toLowerCase())),
             )
@@ -554,7 +670,9 @@ class LinkedInScraperService {
           await this.page.evaluate(() => {
             const buttons = Array.from(document.querySelectorAll("button"))
             const submitBtn = buttons.find((btn) =>
-              ["submit", "verify", "continue", "next"].some((text) => btn.innerText.toLowerCase().includes(text)),
+              ["submit", "verify", "continue", "next"].some(
+                (text) => btn.textContent && btn.textContent.toLowerCase().includes(text),
+              ),
             )
             if (submitBtn) submitBtn.click()
           })
@@ -600,7 +718,18 @@ class LinkedInScraperService {
       }
 
       // Wait for the connections list to load
-      await this.page.waitForSelector(".mn-connection-card", { timeout: 10000 })
+      try {
+        await this.page.waitForSelector(".mn-connection-card", { timeout: 10000 })
+      } catch (error) {
+        console.error("Could not find connection cards:", error.message)
+
+        // Take a screenshot to see what's on the page
+        const connectionsScreenshot = path.join(this.captchaDir, `connections_screen_${Date.now()}.png`)
+        await this.page.screenshot({ path: connectionsScreenshot, fullPage: true })
+        console.log(`Saved connections page screenshot to ${connectionsScreenshot}`)
+
+        return { success: false, message: "Could not find connection cards on the page" }
+      }
 
       console.log("Scrolling to load all connections...")
       // Scroll down to load more connections
@@ -742,11 +871,17 @@ class LinkedInScraperService {
 
           await this.delay(2000) // Allow page to fully load
 
+          // Take a screenshot of the profile page for debugging
+          const profileScreenshot = path.join(this.captchaDir, `profile_${idx}_${Date.now()}.png`)
+          await this.page.screenshot({ path: profileScreenshot, fullPage: true })
+          console.log(`Saved profile screenshot to ${profileScreenshot}`)
+
           // Extract location
           let location = ""
           try {
             location = await this.page.$eval("span.text-body-small.inline", (el) => el.textContent.trim())
           } catch (e) {
+            console.log("Location not available for this profile")
             // Location not available
           }
 
@@ -761,6 +896,7 @@ class LinkedInScraperService {
               el.textContent.trim(),
             )
           } catch (e) {
+            console.log("Experience details not available for this profile")
             // Experience details not available
           }
 
