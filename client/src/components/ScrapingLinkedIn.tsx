@@ -70,7 +70,7 @@ const ScrapingLinkedIn: React.FC = () => {
     setSuccess(null);
   
     try {
-      const response = await axios.post<ApiResponse>('https://outflo-1.onrender.com/api/scraper/connections', {
+      const response = await axios.post<ApiResponse>('https://outflo-2.onrender.com/api/scraper/connections', {
         email: formData.email,
         password: formData.password,
         maxConnections: formData.maxConnections || null
@@ -100,7 +100,7 @@ const ScrapingLinkedIn: React.FC = () => {
   
     try {
       const response = await axios.get<ApiResponse>(
-        `https://outflo-1.onrender.com/api/scraper/export/${formData.email}`
+        `https://outflo-2.onrender.com/api/scraper/export/${formData.email}`
       );
   
       if (response.data.success) {
@@ -135,7 +135,7 @@ const ScrapingLinkedIn: React.FC = () => {
     setError(null);
     
     try {
-      const response = await axios.post<ApiResponse>('https://outflo-1.onrender.com/api/scraper/detailed-profiles', {
+      const response = await axios.post<ApiResponse>('https://outflo-2.onrender.com/api/scraper/detailed-profiles', {
         email: formData.email,
         password: formData.password,
         urls: selectedProfiles
