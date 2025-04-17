@@ -19,41 +19,69 @@ class LinkedInScraperService {
 
   async initialize() {
     try {
-      this.browser = await puppeteer.launch({
-        headless: this.headless,
-        executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', // Windows Chrome path
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu',
-          '--disable-notifications',
-          '--window-size=1920,1080',
-          '--disable-blink-features=AutomationControlled',
-        ],
-        defaultViewport: { width: 1920, height: 1080 },
-        ignoreHTTPSErrors: true,
-      });
-
+      // Try multiple possible Chrome/Chromium paths
+      const possiblePaths = [
+        process.env.PUPPETEER_EXECUTABLE_PATH,
+        '/usr/bin/google-chrome',
+        '/usr/bin/chromium',
+        '/usr/bin/chromium-browser',
+        '/usr/bin/google-chrome-stable',
+        '/usr/local/bin/chromium',
+        '/usr/local/bin/chrome'
+      ].filter(Boolean);
+  
+      let browser;
+      let lastError;
+  
+      for (const path of possiblePaths) {
+        try {
+          browser = await puppeteer.launch({
+            headless: 'new',  // Use new headless mode
+            args: [
+              '--no-sandbox',
+              '--disable-setuid-sandbox',
+              '--disable-dev-shm-usage',
+              '--single-process'
+            ],
+            executablePath: path,
+            ignoreDefaultArgs: ['--disable-extensions'],
+            defaultViewport: { width: 1920, height: 1080 }
+          });
+          break; // If successful, exit the loop
+        } catch (error) {
+          lastError = error;
+          continue;
+        }
+      }
+  
+      if (!browser) {
+        // If all paths failed, try without specifying executablePath
+        try {
+          browser = await puppeteer.launch({
+            headless: 'new',
+            args: [
+              '--no-sandbox',
+              '--disable-setuid-sandbox',
+              '--disable-dev-shm-usage'
+            ]
+          });
+        } catch (finalError) {
+          console.error('All browser launch attempts failed:');
+          console.error(lastError);
+          throw finalError;
+        }
+      }
+  
+      this.browser = browser;
       this.page = await this.browser.newPage();
-
-      // Randomize user agent (Windows-specific)
-      await this.page.setUserAgent(
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-      );
-
-      // Remove webdriver property
-      await this.page.evaluateOnNewDocument(() => {
-        delete navigator.__proto__.webdriver;
-      });
-
+      await this.page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+      
       return true;
     } catch (error) {
-      console.error('❌ Error initializing browser:', error.message);
+      console.error(`Error initializing browser: ${error}`);
       return false;
     }
   }
-
   async delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
