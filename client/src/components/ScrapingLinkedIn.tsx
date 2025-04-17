@@ -60,7 +60,7 @@ const handleSubmit = async (e: React.FormEvent) => {
     setSuccess(null);
   
     try {
-      const response = await axios.post<ApiResponse>('http://localhost:5000/api/scraper/connections', {
+      const response = await axios.post<ApiResponse>('https://outflo-1.onrender.com/api/scraper/connections', {
         email: formData.email,
         password: formData.password,
         maxConnections: formData.maxConnections || null
@@ -90,7 +90,7 @@ const handleSubmit = async (e: React.FormEvent) => {
   
     try {
       const response = await axios.get<ApiResponse>(
-        `http://localhost:5000/api/scraper/export/${formData.email}`
+        `https://outflo-1.onrender.com/api/scraper/export/${formData.email}`
       );
   
       if (response.data.success) {
@@ -120,7 +120,7 @@ const handleSubmit = async (e: React.FormEvent) => {
     setError(null);
     
     try {
-      const response = await axios.post<ApiResponse>('http://localhost:5000/api/scraper/detailed-profiles', {
+      const response = await axios.post<ApiResponse>('https://outflo-1.onrender.com/scraper/detailed-profiles', {
         email: formData.email,
         password: formData.password,
         urls: urls
