@@ -4,8 +4,6 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-     "postinstall": "npm i puppeteer browsers install chrome",
-
     "start": "nodemon server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -15,6 +13,7 @@
   "type": "commonjs",
   "dependencies": {
     "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
     "express": "^5.1.0",
     "mongoose": "^8.13.2",
     "puppeteer": "^24.6.1",

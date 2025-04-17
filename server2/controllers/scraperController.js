@@ -1,6 +1,7 @@
 const puppeteer = require('puppeteer');
 const config = require('../config/config');
 const Connection = require('../models/connections');
+require('dotenv').config()
 
 class LinkedInScraperService {
   constructor() {
@@ -20,7 +21,7 @@ class LinkedInScraperService {
     try {
       // Launch the browser
       this.browser = await puppeteer.launch({
-        headless: this.headless ? (puppeteer.isHeadlessSupported ? 'new' : true) : false,
+        
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
@@ -29,7 +30,8 @@ class LinkedInScraperService {
           '--disable-notifications',
           '--window-size=1920,1080'
         ],
-        defaultViewport: { width: 1920, height: 1080 }
+        defaultViewport: { width: 1920, height: 1080 },
+        executablePath: process.env.NODE_ENV==="production" ? process.env.PUPPETEER_EXECUTABLE_PATH : puppeteer.executablePath(),
       });
 
       // Create a new page
