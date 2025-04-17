@@ -15,6 +15,7 @@
     "cors": "^2.8.5",
     "express": "^5.1.0",
     "mongoose": "^8.13.2",
+    "puppeteer": "^24.6.1",
     "selenium-webdriver": "^4.31.0"
   },
   "devDependencies": {
