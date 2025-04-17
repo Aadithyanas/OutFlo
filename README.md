@@ -101,12 +101,12 @@ Each campaign has the following structure:
 
 Implemented in **Python using Selenium** for automation of LinkedIn profile scraping.
 
-1. **`scraper_sample.py`**
+1. **`ScrapingLinkedIn.py`**
    - Logs into LinkedIn
    - Extracts basic sample data of your first-degree connections
    - Generates mock dataset for testing
 
-2. **`scraper_details.py`**
+2. **`ScrapingEachUserInUrCollection.py`**
    - Takes URLs from the sample data
    - Scrapes detailed information:
      - Full Name
@@ -142,7 +142,7 @@ This acts as an **alternate server** combining:
 | Backend     | Node.js, Express, TypeScript, MongoDB    |
 | Frontend    | React, TypeScript                        |
 | Scraping    | Python (Selenium), Node.js (Puppeteer)   |
-| AI          | Gemini AI / OpenAI API (free tier)       |
+| AI          | Gemini AI      |
 | Deployment  | Render (backend), Vercel/Netlify (frontend) |
 
 ---
@@ -151,8 +151,8 @@ This acts as an **alternate server** combining:
 
 | Service  | Link |
 |----------|------|
-| GitHub Repository | [GitHub - OutFlo-Assignment](https://github.com/YOUR_USERNAME/OutFlo-Assignment) |
-| Frontend Live     | https://your-vercel-or-netlify-link |
+| GitHub Repository | [GitHub - OutFlo-Assignment](https://github.com/Aadithyanas/OutFlo) |
+| Frontend Live     | [https://your-vercel-or-netlify-link](https://out-fc7xximss-aadithyanas-projects.vercel.app/) |
 | Backend Live      | https://your-render-link |
 
 ---
@@ -169,13 +169,6 @@ This acts as an **alternate server** combining:
 
 ---
 
-## 📸 (Optional) Screenshots
-
-- Campaign dashboard UI
-- Message generator with AI result
-- Scraped leads view from UI (via server2)
-
----
 
 ## 📝 Notes
 
@@ -183,10 +176,4 @@ This acts as an **alternate server** combining:
 - Credentials and headless sessions not deployed for safety reasons.
 - All APIs and UIs are testable on deployment links.
 
----
 
-## 📞 Submission Details
-
-- Submit GitHub repo and deployed project via **Google Form**.
-- Optional: Share on Internshala chat.
-- For urgent queries: **Akshat - 80521 60589** (Do not spam)
