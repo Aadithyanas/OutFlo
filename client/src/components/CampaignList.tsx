@@ -74,6 +74,13 @@ export const CampaignList: React.FC = () => {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
         <h1 className="text-2xl md:text-3xl font-bold text-white animate-pulse-text">Campaigns</h1>
         <button
+          onClick={() => navigate('/scrapping')}
+          className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-4 py-2 rounded-lg flex items-center space-x-2 hover:from-blue-700 hover:to-purple-700 transition-all duration-300 transform hover:scale-105 shadow-lg"
+        >
+          <Plus size={20} />
+          <span>Scrapping</span>
+        </button>
+        <button
           onClick={() => navigate('/campaigns/new')}
           className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-4 py-2 rounded-lg flex items-center space-x-2 hover:from-blue-700 hover:to-purple-700 transition-all duration-300 transform hover:scale-105 shadow-lg"
         >

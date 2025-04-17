@@ -6,6 +6,7 @@ import { CampaignList } from './components/CampaignList';
 import { CampaignForm } from './components/CampaignForm';
 import { MessageGenerator } from './components/MessageGenerator';
 import { LayoutGrid, MessageSquare, Menu, X } from 'lucide-react';
+import ScrapingLinkedIn from './components/ScrapingLinkedIn';
 
 function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -83,6 +84,7 @@ function App() {
                 <Route path="/" element={<CampaignList />} />
                 <Route path="/campaigns/new" element={<CampaignForm />} />
                 <Route path="/campaigns/:id" element={<CampaignForm />} />
+                <Route path='/scrapping' element={<ScrapingLinkedIn/>}/>
                 <Route path="/message-generator" element={<MessageGenerator />} />
               </Routes>
             </div>
