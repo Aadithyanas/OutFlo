@@ -13,6 +13,7 @@ class LinkedInScraperService {
   }
 
   setCredentials(email, password) {
+    console.log(email,password)
     this.email = email;
     this.password = password;
   }
@@ -62,6 +63,7 @@ class LinkedInScraperService {
     }
 
     try {
+      console.log(this.email,this.password)
       console.log("Logging in to LinkedIn...");
       await this.page.goto('https://www.linkedin.com/login', { waitUntil: 'networkidle2' });
 
